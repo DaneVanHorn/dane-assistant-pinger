@@ -1,0 +1,43 @@
+name: Keep server awake
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'   # ping every 10 minutes (GitHub may start it a few minutes late)
+    - cron: '17 6 1 * *'     # monthly heartbeat commit: GitHub pauses schedules after 60 quiet days
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  ping:
+    if: github.event.schedule != '17 6 1 * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Ping /health (a sleeping server takes up to a minute to wake)
+        env:
+          PING_URL: ${{ secrets.PING_URL }}
+        run: |
+          for attempt in 1 2 3; do
+            if curl -fsS --max-time 90 "$PING_URL/health" -o /dev/null; then
+              echo "Server is up"; exit 0
+            fi
+            echo "Attempt $attempt failed; retrying in 20s"
+            sleep 20
+          done
+          echo "Server did not answer after 3 attempts"; exit 1
+
+  heartbeat:
+    if: github.event.schedule == '17 6 1 * *'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Commit heartbeat
+        run: |
+          date -u +%Y-%m-%dT%H:%M:%SZ > heartbeat.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add heartbeat.txt
+          git commit -m "Monthly heartbeat"
+          git push
